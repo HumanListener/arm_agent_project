@@ -1,0 +1,783 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<title>虚拟机械臂 · 钢材缺陷巡检 + YOLO</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; overflow: hidden; background: #111; font-family: -apple-system, "PingFang SC", sans-serif; color: #ddd; }
+  #canvas-wrap { position: fixed; top: 0; left: 360px; right: 0; bottom: 0; }
+  #sidebar {
+    position: fixed; top: 0; left: 0; bottom: 0; width: 360px; background: #1a1d23;
+    border-right: 1px solid #2c313a; padding: 14px; overflow-y: auto; z-index: 10;
+  }
+  #sidebar h2 { font-size: 15px; margin: 0 0 10px; color: #6cf; }
+  #sidebar h3 { font-size: 13px; margin: 16px 0 6px; color: #aaa; border-bottom: 1px solid #2c313a; padding-bottom: 4px; }
+  .row { display: flex; gap: 6px; margin-bottom: 6px; }
+  button {
+    background: #2c313a; color: #ddd; border: 1px solid #3a404c; border-radius: 6px;
+    padding: 6px 10px; font-size: 12px; cursor: pointer; flex: 1;
+  }
+  button:hover:not(:disabled) { background: #3a404c; }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  button.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+  input[type=text], input[type=url] {
+    width: 100%; background: #0d1117; color: #ddd; border: 1px solid #2c313a;
+    border-radius: 6px; padding: 6px 8px; font-size: 12px;
+  }
+  #detect-img, #camera-view {
+    width: 100%; background: #000; border-radius: 6px; margin-top: 6px; display: none;
+  }
+  #detect-result { font-size: 12px; margin-top: 6px; line-height: 1.6; }
+  .chat-bubble {
+    background: #2c313a; border-radius: 8px; padding: 6px 10px; margin-bottom: 6px;
+    font-size: 12px; line-height: 1.5; white-space: pre-wrap;
+  }
+  .chat-user { background: #1f6feb33; border-left: 3px solid #1f6feb; }
+  .chat-ai { background: #2c313a; border-left: 3px solid #4CAF50; }
+  #aiChatHistory { max-height: 180px; overflow-y: auto; margin-top: 6px; }
+  #aiStatus { font-size: 11px; color: #FF9800; margin-top: 4px; min-height: 14px; }
+  .preset-row { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+  .preset-row button { flex: 0 0 auto; padding: 4px 8px; font-size: 11px; }
+  #hud {
+    position: fixed; top: 12px; right: 12px; z-index: 10;
+    background: rgba(0,0,0,.6); padding: 10px 14px; border-radius: 8px;
+    font-size: 12px; line-height: 1.7; min-width: 220px;
+  }
+  #hud b { color: #6cf; }
+  #toast {
+    position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
+    background: rgba(20,20,20,.9); border: 1px solid #4CAF50; color: #4CAF50;
+    padding: 10px 20px; border-radius: 8px; font-size: 13px; z-index: 100;
+    display: none; max-width: 600px;
+  }
+  .small { font-size: 11px; color: #888; }
+</style>
+<script type="importmap">
+  { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
+</script>
+</head>
+<body>
+
+<div id="sidebar">
+  <h2>🤖 机械臂控制台</h2>
+
+  <h3>📷 YOLO 缺陷检测</h3>
+  <div class="row">
+    <button onclick="document.getElementById('fileInput').click()">📁 上传图片</button>
+    <button id="btnCamera">🎥 开摄像头</button>
+  </div>
+  <input type="file" id="fileInput" accept="image/*" style="display:none" />
+  <video id="camera-view" autoplay playsinline muted></video>
+  <button id="btnSnap" style="display:none; margin-top:6px">📸 拍照检测</button>
+  <img id="detect-img" />
+  <div id="detect-result">尚未检测。上传一张钢板缺陷图片，或用摄像头拍照。</div>
+
+  <h3>⌨️ 命令行（自然语言 → Ollama）</h3>
+  <div class="row">
+    <input type="url" id="aiOllamaUrl" value="http://localhost:11434" placeholder="Ollama 地址" style="flex:2" />
+    <button id="aiTestBtn" style="flex:0 0 auto">测试</button>
+  </div>
+  <input type="text" id="aiModelName" value="deepseek-r1:8b" placeholder="模型名" style="margin-top:4px" />
+  <div class="row" style="margin-top:6px">
+    <input type="text" id="aiInput" placeholder="如：让机械臂向左转，张开爪子" />
+    <button id="aiSendBtn" class="primary" style="flex:0 0 auto">发送</button>
+  </div>
+  <div id="aiChatHistory"></div>
+  <div id="aiStatus"></div>
+  <div class="preset-row">
+    <button class="ai-preset-btn" data-preset="回零">回零</button>
+    <button class="ai-preset-btn" data-preset="前伸">前伸</button>
+    <button class="ai-preset-btn" data-preset="抬起">抬起</button>
+    <button class="ai-preset-btn" data-preset="抓取">抓取</button>
+    <button class="ai-preset-btn" data-preset="松开">松开</button>
+    <button class="ai-preset-btn" data-preset="左转">左转</button>
+    <button class="ai-preset-btn" data-preset="右转">右转</button>
+  </div>
+
+  <h3>🎯 自动分拣演示</h3>
+  <div class="row">
+    <button id="btnDemoPick" class="primary">▶ 自动捡小球演示</button>
+    <button id="btnIkCheck">🧪 IK 自检</button>
+  </div>
+  <div class="small">检测到缺陷后会自动执行：移动到缺陷位置 → 夹起 → 放到目标区 → 回零。</div>
+
+  <h3>🔗 来自 Streamlit 的决策</h3>
+  <div id="decisionPanel" class="small">暂无。Streamlit 检测到缺陷后会把决策同步到这里。</div>
+</div>
+
+<div id="canvas-wrap"></div>
+
+<div id="hud">
+  <div><b>虚拟机械臂 6 轴仿真</b></div>
+  <div>状态：<span id="state">初始化…</span></div>
+  <div>末端：<span id="pose">—</span></div>
+  <div>日志：<span id="log">—</span></div>
+</div>
+
+<div id="toast"></div>
+
+<script type="module">
+import * as THREE from 'three';
+
+// ============================================================
+// 1) Three.js 场景
+// ============================================================
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x1a1d23);
+
+const camera = new THREE.PerspectiveCamera(45, 1, 0.01, 10);
+camera.position.set(0.55, 0.55, 0.55);
+camera.lookAt(0, 0.05, 0);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+document.getElementById('canvas-wrap').appendChild(renderer.domElement);
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+const dir = new THREE.DirectionalLight(0xffffff, 0.9);
+dir.position.set(0.5, 1, 0.3);
+scene.add(dir);
+
+// 地面
+const ground = new THREE.Mesh(
+  new THREE.PlaneGeometry(2, 2),
+  new THREE.MeshStandardMaterial({ color: 0x2a2d33 })
+);
+ground.rotation.x = -Math.PI/2;
+scene.add(ground);
+
+// 钢板（被检测对象）——放在机械臂前方的可达区域内
+const steel = new THREE.Mesh(
+  new THREE.BoxGeometry(0.22, 0.005, 0.10),
+  new THREE.MeshStandardMaterial({ color: 0x888c92, metalness: 0.6, roughness: 0.4 })
+);
+steel.position.set(0, 0.0025, 0.03);
+scene.add(steel);
+
+// 分拣目标区（三个坑位，坐标与 config/settings.py 的 DEST_BINS 严格一致）
+const DEST_BINS = {
+  review: { label: '复检区', x: -0.20, z: 0.00, color: 0x3366cc },
+  ng:     { label: '废品区', x:  0.20, z: 0.00, color: 0xaa3333 },
+  rework: { label: '返修区', x:  0.00, z: 0.05, color: 0xcc9922 },
+};
+
+/** 按坐标反查坑位名（用于 toast / 状态显示） */
+function binLabelAt(x, z) {
+  for (const b of Object.values(DEST_BINS)) {
+    if (Math.abs(b.x - x) < 1e-3 && Math.abs(b.z - z) < 1e-3) return b.label;
+  }
+  return `${x.toFixed(2)}, ${z.toFixed(2)}`;
+}
+
+function makeBinMesh(color) {
+  const g = new THREE.Group();
+  const disc = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.055, 0.055, 0.004, 28),
+    new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.25 })
+  );
+  g.add(disc);
+  const ring = new THREE.Mesh(
+    new THREE.TorusGeometry(0.055, 0.003, 8, 28),
+    new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: color, emissiveIntensity: 0.4 })
+  );
+  ring.rotation.x = Math.PI / 2;
+  ring.position.y = 0.003;
+  g.add(ring);
+  return g;
+}
+
+for (const [key, bin] of Object.entries(DEST_BINS)) {
+  const g = makeBinMesh(bin.color);
+  g.position.set(bin.x, 0.005, bin.z);
+  scene.add(g);
+  bin.mesh = g;
+}
+
+// 兼容旧代码里的废料区标记
+const binMark = DEST_BINS.ng.mesh;
+
+// ============================================================
+// 2) 6 轴机械臂（用几何体拼装，关节名对齐 robotAI.js）
+// ============================================================
+const matArm  = new THREE.MeshStandardMaterial({ color: 0x6cf, metalness: 0.3 });
+const matDark = new THREE.MeshStandardMaterial({ color: 0x444a55 });
+const matGrip = new THREE.MeshStandardMaterial({ color: 0xff6b6b });
+
+// 底座
+const baseMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.07, 0.06, 24), matDark);
+baseMesh.position.set(0, 0.03, -0.25);
+scene.add(baseMesh);
+
+const jRotation  = new THREE.Group();  jRotation.position.set(0, 0.06, -0.25);  scene.add(jRotation);
+const jRotation1 = new THREE.Group();  jRotation1.position.set(0, 0, 0);       jRotation.add(jRotation1);
+
+// 大臂（向上 0.15）
+const upperArm = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.014, 0.15, 12), matArm);
+upperArm.position.set(0, 0.075, 0);
+jRotation1.add(upperArm);
+
+const jRotation2 = new THREE.Group();  jRotation2.position.set(0, 0.15, 0);    jRotation1.add(jRotation2);
+
+// 小臂（向前 0.15）
+const foreArm = new THREE.Mesh(new THREE.CylinderGeometry(0.01, 0.012, 0.15, 12), matArm);
+foreArm.rotation.x = Math.PI/2;
+foreArm.position.set(0, 0, 0.075);
+jRotation2.add(foreArm);
+
+const jRotation3 = new THREE.Group();  jRotation3.position.set(0, 0, 0.15);    jRotation2.add(jRotation3);
+const jRotation4 = new THREE.Group();  jRotation4.position.set(0, 0, 0);       jRotation3.add(jRotation4);
+
+// 夹爪
+const gripBase = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.02, 0.02), matGrip);
+gripBase.position.set(0, 0, 0.01);
+jRotation4.add(gripBase);
+
+const fingerL = new THREE.Mesh(new THREE.BoxGeometry(0.008, 0.03, 0.02), matGrip);
+fingerL.position.set(-0.02, 0, 0.025);
+jRotation4.add(fingerL);
+const fingerR = fingerL.clone();
+fingerR.position.x = 0.02;
+jRotation4.add(fingerR);
+
+// 关节注册表（接口对齐 URDFLoader 的 robot.joints）
+const jointDefs = {
+  Rotation:  { get: () => jRotation.rotation.y,  set: v => jRotation.rotation.y = v,  limit: [-1.57, 1.57] },
+  Rotation1: { get: () => jRotation1.rotation.z, set: v => jRotation1.rotation.z = v, limit: [-1.57, 1.57] },
+  Rotation2: { get: () => jRotation2.rotation.z, set: v => jRotation2.rotation.z = v, limit: [-1.57, 1.57] },
+  Rotation3: { get: () => jRotation3.rotation.z, set: v => jRotation3.rotation.z = v, limit: [-1.57, 1.57] },
+  Rotation4: { get: () => jRotation4.rotation.y, set: v => jRotation4.rotation.y = v, limit: [-1.57, 1.57] },
+  Rotation5: { get: () => (0.02 - Math.abs(fingerL.position.x)) / 0.014 * 1.57,
+               set: v => {
+                 const spread = 0.02 - (v / 1.57) * 0.014;
+                 fingerL.position.x = -spread;
+                 fingerR.position.x =  spread;
+               }, limit: [0, 1.57] },
+};
+window.robot = {
+  joints: Object.fromEntries(Object.entries(jointDefs).map(([name, def]) => [name, {
+    jointType: 'revolute',
+    limit: { lower: def.limit[0], upper: def.limit[1] },
+    get angle() { return def.get(); },
+    setJointValue(v) { def.set(v); },
+  }])),
+  updateMatrixWorld: (b) => scene.updateMatrixWorld(b),
+};
+
+// 被抓的小球（代表缺陷工件）
+const ball = new THREE.Mesh(
+  new THREE.SphereGeometry(0.015, 16, 16),
+  new THREE.MeshStandardMaterial({ color: 0xffaa33 })
+);
+ball.position.set(0.03, 0.02, 0.03);
+scene.add(ball);
+let ballHeld = false;
+
+// ============================================================
+// 2.5) 逆运动学（把工作台世界坐标 → 6 个关节角）
+//      几何：底座在 (0, 0.06, -0.25)，大臂 0.15m 向上，小臂 0.15m 向前，夹爪 0.06m。
+//      与 config/settings.py 的 TABLE_X/Y 映射配套，是"像素 → 世界 → 关节"的最后一跳。
+// ============================================================
+const BASE_Z = -0.25;      // 底座 z
+const BASE_Y = 0.06;       // 腰部关节高度
+const L1 = 0.15, L2 = 0.15, L3 = 0.06;
+
+function clampJ(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+function baseAngleFor(x, z) {
+  // Rotation 绕 +Y 轴：0 时机械臂指向 +Z（正前方），正角度转向 -X
+  return clampJ(Math.atan2(-(x - 0), z - BASE_Z), -1.57, 1.57);
+}
+
+/**
+ * 二连杆 IK：把工作台坐标 (x, z) 与末端高度 y 反解成 Rotation/Rotation1/Rotation2。
+ *
+ * 几个必须讲清楚的几何前提（改坐标时别踩坑）：
+ *  1) 底座在世界坐标 (0, 0.06, -0.25)，Rotation 绕 +Y 轴：0 时机械臂指向 +Z，正角转向 -X，
+ *     所以底座"够不到"自己脚下（z < -0.22 大多不可达）；
+ *  2) 大臂 0.15m 竖直向上、小臂 0.15m 沿臂长方向、夹爪 0.06m，总臂展 ≈0.36m；
+ *  3) 腕部 Rotation3 会改变夹爪朝向，夹爪尖端位置里含 L3*cos(t1+t2+wrist)，所以先迭代扣除
+ *     腕部偏移再解二连杆，实测量误差 < 2mm；
+ *  4) 两个肘部分支（t2 = ±acos）都试，取正运动学误差最小的那个，否则会出现"够不到却在瞎动"。
+ */
+function ikArm(x, z, y, wrist = 0.3) {
+  const A = baseAngleFor(x, z);
+  const planar = Math.hypot(x, z - BASE_Z);
+  let best = null;
+  for (const sign of [-1, 1]) {
+    let t1 = 0, t2 = 0;
+    for (let i = 0; i < 3; i++) {
+      const wdx = L3 * Math.cos(t1 + t2 + wrist);
+      const wdy = L3 * Math.sin(t1 + t2 + wrist);
+      const h0 = planar - wdx;
+      const v0 = (y - BASE_Y) - wdy;
+      const d = Math.hypot(h0, v0);
+      const phi = Math.atan2(v0, h0);
+      const c2 = clampJ((d * d - L1 * L1 - L2 * L2) / (2 * L1 * L2), -1, 1);
+      t2 = sign * Math.acos(c2);
+      t1 = phi - Math.atan2(L2 * Math.sin(t2), L1 + L2 * Math.cos(t2));
+    }
+    if (Math.abs(t1) > 1.57 || Math.abs(t2) > 1.57) continue;
+    // 用正运动学回算末端位置，挑误差最小的分支
+    const r = L1 * Math.cos(t1) + L2 * Math.cos(t1 + t2) + L3 * Math.cos(t1 + t2 + wrist);
+    const ex = -r * Math.sin(A);
+    const ez = BASE_Z + r * Math.cos(A);
+    const err = Math.hypot(ex - x, ez - z);
+    if (!best || err < best.err) best = { A, t1, t2, err };
+  }
+  if (!best) {
+    // 完全够不到：退化成"朝目标方向伸展"，至少不会抽搐
+    const phi = Math.atan2(y - BASE_Y, Math.max(planar, 1e-4));
+    return { Rotation: A, Rotation1: clampJ(phi, -1.57, 1.57), Rotation2: 0, reachErr: Infinity };
+  }
+  return {
+    Rotation: best.A,
+    Rotation1: clampJ(best.t1, -1.57, 1.57),
+    Rotation2: clampJ(best.t2, -1.57, 1.57),
+    reachErr: best.err,
+  };
+}
+
+/** 拼一个"末端到 (x,y,z)"的完整姿态；grip: 0=张开 1.3=夹紧 */
+function poseToReach(x, y, z, grip = 0, wrist = 0.3) {
+  const ik = ikArm(x, z, y, wrist);
+  return { ...ik, Rotation3: wrist, Rotation4: 0, Rotation5: grip };
+}
+
+// ============================================================
+// 3) setRobotJoints（平滑插值，移植自 robotControls.js）
+// ============================================================
+function easeInOutCubic(t) { return t < 0.5 ? 4*t*t*t : 1 - Math.pow(-2*t+2,3)/2; }
+
+function setRobotJoints(targetAngles, options = {}) {
+  const duration = options.duration || 1500;
+  const planned = [];
+  for (const [name, raw] of Object.entries(targetAngles)) {
+    const j = window.robot.joints[name];
+    if (!j) continue;
+    let tgt = raw;
+    tgt = Math.max(j.limit.lower, Math.min(j.limit.upper, tgt));
+    planned.push({ j, start: j.angle, target: tgt });
+  }
+  return new Promise(resolve => {
+    const t0 = performance.now();
+    function frame(now) {
+      const t = Math.min(1, (now - t0) / duration);
+      const e = easeInOutCubic(t);
+      for (const p of planned) p.j.setJointValue(p.start + (p.target - p.start) * e);
+      if (t < 1) requestAnimationFrame(frame);
+      else resolve();
+    }
+    requestAnimationFrame(frame);
+  });
+}
+
+// ============================================================
+// 4) 预设姿态（移植自 robotAI.js）
+// ============================================================
+const PRESET_POSES = {
+  '回零': { Rotation:0, Rotation1:0, Rotation2:0, Rotation3:0, Rotation4:0, Rotation5:0 },
+  '前伸': { Rotation:0, Rotation1:0.2, Rotation2:-0.3, Rotation3:0, Rotation4:0, Rotation5:0 },
+  '抬起': { Rotation:0, Rotation1:1.0, Rotation2:0.5, Rotation3:0.3, Rotation4:0, Rotation5:0 },
+  '抓取': { Rotation:0, Rotation1:0.3, Rotation2:-0.4, Rotation3:0.3, Rotation4:0, Rotation5:1.3 },
+  '松开': { Rotation:0, Rotation1:0.3, Rotation2:-0.4, Rotation3:0.3, Rotation4:0, Rotation5:0 },
+  '左转': { Rotation:1.2, Rotation1:0.3, Rotation2:-0.4, Rotation3:0, Rotation4:0, Rotation5:0 },
+  '右转': { Rotation:-1.2, Rotation1:0.3, Rotation2:-0.4, Rotation3:0, Rotation4:0, Rotation5:0 },
+};
+
+// ============================================================
+// 5) UI 工具
+// ============================================================
+function el(id) { return document.getElementById(id); }
+function setStatus(s) { el('state').textContent = s; }
+function toast(msg, isErr = false) {
+  const t = el('toast');
+  t.textContent = msg;
+  t.style.borderColor = isErr ? '#F44336' : '#4CAF50';
+  t.style.color = isErr ? '#F44336' : '#4CAF50';
+  t.style.display = 'block';
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => { t.style.display = 'none'; }, 3500);
+}
+function addChat(role, text) {
+  const div = document.createElement('div');
+  div.className = `chat-bubble chat-${role}`;
+  div.textContent = text;
+  el('aiChatHistory').appendChild(div);
+  el('aiChatHistory').scrollTop = el('aiChatHistory').scrollHeight;
+}
+
+// ============================================================
+// 6) YOLO 检测（上传图片 / 摄像头）
+// ============================================================
+async function runDetect(fileBlob) {
+  el('detect-result').innerHTML = '⏳ YOLO 推理中…';
+  const fd = new FormData();
+  fd.append('file', fileBlob, 'upload.jpg');
+  try {
+    const res = await fetch('/api/detect', { method: 'POST', body: fd });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const r = await res.json();
+    if (r.vis_image) {
+      const img = el('detect-img');
+      img.src = r.vis_image;
+      img.style.display = 'block';
+    }
+    if (r.has_defect) {
+      el('detect-result').innerHTML =
+        `🔴 <b>检测到缺陷</b>：${r.defect_cls}，置信度 ${(r.conf*100).toFixed(1)}%<br/>` +
+        `坐标：${r.world_xy ? `(${r.world_xy[0].toFixed(3)}, ${r.world_xy[1].toFixed(3)})` : '—'}`;
+      const [wx, wy] = r.world_xy || [0.1, 0.05];
+      const destKey = r.dest || 'ng';
+      const bin = DEST_BINS[destKey] || DEST_BINS.ng;
+      toast(`⚠️ 检测到缺陷「${r.defect_cls}」(${(r.conf*100).toFixed(0)}%)，开始自动分拣到${bin.label}…`);
+      if (!busy && !busBusy) {
+        await pickAndPlace(wx, wy, [bin.x, bin.z], bin.label);
+        await reportArmReady();
+      }
+    } else {
+      el('detect-result').innerHTML = `✅ 未检测到缺陷（最高置信度 ${(r.conf*100).toFixed(1)}%）`;
+    }
+  } catch (e) {
+    el('detect-result').innerHTML = `❌ 检测失败：${e.message}`;
+    toast('检测失败：' + e.message, true);
+  }
+}
+
+el('fileInput').addEventListener('change', (e) => {
+  const f = e.target.files[0];
+  if (f) runDetect(f);
+});
+
+let cameraStream = null;
+el('btnCamera').addEventListener('click', async () => {
+  if (cameraStream) {
+    cameraStream.getTracks().forEach(t => t.stop());
+    cameraStream = null;
+    el('camera-view').style.display = 'none';
+    el('btnSnap').style.display = 'none';
+    el('btnCamera').textContent = '🎥 开摄像头';
+    return;
+  }
+  try {
+    cameraStream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
+    const v = el('camera-view');
+    v.srcObject = cameraStream;
+    v.style.display = 'block';
+    el('btnSnap').style.display = 'block';
+    el('btnCamera').textContent = '⏹ 关摄像头';
+  } catch (e) {
+    toast('打不开摄像头：' + e.message, true);
+  }
+});
+el('btnSnap').addEventListener('click', () => {
+  const v = el('camera-view');
+  const c = document.createElement('canvas');
+  c.width = v.videoWidth; c.height = v.videoHeight;
+  c.getContext('2d').drawImage(v, 0, 0);
+  c.toBlob(b => runDetect(b), 'image/jpeg', 0.9);
+});
+
+// ============================================================
+// 7) 自动分拣动作序列（IK 版：真正走到缺陷坐标，再投放到指定区域）
+// ============================================================
+const PICK_Y = 0.03;      // 夹取时末端高度（工件表面 3cm）
+const HOVER_Y = 0.10;     // 悬停高度
+const DROP_Y = 0.05;      // 投放时末端高度
+
+/** 把缺陷工件挪到工作台的 (wx, wz) 位置（球心略高于钢板） */
+function placeWorkpiece(wx, wz) {
+  ball.position.set(wx, 0.02, wz);
+  ballHeld = false;
+}
+
+/**
+ * 完整分拣：抓取 (x,z) 处的工件 → 移动到 destXY 上方 → 放下 → 回零。
+ * 结束后回调 /api/arm_ready，让 Streamlit / Agent 知道动作完成。
+ */
+async function pickAndPlace(x, z, destXy, label = '废品区') {
+  const bin = destXy ? { x: destXy[0], z: destXy[1], label } : DEST_BINS.ng;
+  setStatus(`自动分拣中… → ${bin.label}`);
+  addChat('ai', `[自动分拣] 缺陷工件 (${x.toFixed(3)}, ${z.toFixed(3)}) → ${bin.label} (${bin.x}, ${bin.z})`);
+  placeWorkpiece(x, z);
+  const grip = 1.3;
+  try {
+    await setRobotJoints(PRESET_POSES['回零'], { duration: 500 });
+    // 1) 悬停到工件正上方（张开爪子）
+    await setRobotJoints(poseToReach(x, HOVER_Y, z, 0), { duration: 1000 });
+    // 2) 下降到工件表面
+    await setRobotJoints(poseToReach(x, PICK_Y, z, 0), { duration: 700 });
+    // 3) 闭合夹爪抓住
+    await setRobotJoints(poseToReach(x, PICK_Y, z, grip), { duration: 400 });
+    ballHeld = true;
+    // 4) 抬起
+    await setRobotJoints(poseToReach(x, HOVER_Y + 0.06, z, grip), { duration: 700 });
+    // 5) 平移到目标区上方
+    await setRobotJoints(poseToReach(bin.x, HOVER_Y + 0.06, bin.z, grip), { duration: 1100 });
+    // 6) 下降到目标区
+    await setRobotJoints(poseToReach(bin.x, DROP_Y, bin.z, grip), { duration: 700 });
+    // 7) 张开夹爪放开
+    await setRobotJoints(poseToReach(bin.x, DROP_Y, bin.z, 0), { duration: 400 });
+    ballHeld = false;
+    ball.position.set(bin.x, 0.02, bin.z);
+    // 8) 抬起 + 回零
+    await setRobotJoints(poseToReach(bin.x, HOVER_Y + 0.06, bin.z, 0), { duration: 600 });
+    await setRobotJoints(PRESET_POSES['回零'], { duration: 900 });
+    setStatus(`分拣完成 ✅（已放入${bin.label}）`);
+    addChat('ai', `✅ 已完成：抓取缺陷工件 → 放入${bin.label} → 回零`);
+    toast(`✅ 分拣完成：工件已放入${bin.label}`);
+    return true;
+  } catch (e) {
+    setStatus('分拣出错：' + e.message);
+    return false;
+  }
+}
+
+/** 兼容旧按钮：默认抓钢板中间的球丢进废品区 */
+async function autoPickPlace(x = 0.05, z = 0.03) {
+  await pickAndPlace(x, z, [DEST_BINS.ng.x, DEST_BINS.ng.z], DEST_BINS.ng.label);
+}
+
+el('btnDemoPick').addEventListener('click', () => autoPickPlace(0.05, 0.03));
+
+/** 通知后端"机械臂动作完成" */
+async function reportArmReady() {
+  try { await fetch('/api/arm_ready', { method: 'POST' }); } catch (e) { /* 静默 */ }
+}
+
+/**
+ * IK 自检：把三个分拣坑位与当前工件位置反解一遍，再用正运动学回算实际末端位置对比。
+ * 用来在页面里（真实运行环境）确认"坐标 → 关节角"这条链路是准的，也方便答辩时现场演示。
+ */
+function ikSelfCheck(verbose = true) {
+  const lines = [];
+  let worst = 0;
+  for (const [key, bin] of Object.entries(DEST_BINS)) {
+    const pose = poseToReach(bin.x, PICK_Y, bin.z, 0);
+    const p = fkOf(pose);
+    const err = Math.hypot(p.x - bin.x, p.z - bin.z);
+    worst = Math.max(worst, err);
+    lines.push(`${bin.label}: 目标(${bin.x}, ${bin.z}) 实际(${p.x.toFixed(3)}, ${p.z.toFixed(3)}) 误差 ${(err * 1000).toFixed(1)}mm`);
+  }
+  const ok = worst < 0.01;
+  if (verbose) {
+    addChat('ai', `🧪 IK 自检${ok ? '通过 ✅' : '存在偏差 ⚠️'}\n` + lines.join('\n'));
+    toast(ok ? `✅ IK 自检通过（最大误差 ${(worst * 1000).toFixed(1)}mm）`
+             : `⚠️ IK 自检偏差 ${(worst * 1000).toFixed(1)}mm`, !ok);
+  }
+  return { ok, worst, lines };
+}
+
+/** 正运动学：关节角 → 末端世界坐标（自检用） */
+function fkOf(pose, wrist = 0.3) {
+  const A = pose.Rotation, t1 = pose.Rotation1, t2 = pose.Rotation2;
+  const r = L1 * Math.cos(t1) + L2 * Math.cos(t1 + t2) + L3 * Math.cos(t1 + t2 + wrist);
+  const h = BASE_Y + L1 * Math.sin(t1) + L2 * Math.sin(t1 + t2) + L3 * Math.sin(t1 + t2 + wrist);
+  return { x: -r * Math.sin(A), z: BASE_Z + r * Math.cos(A), y: h };
+}
+
+el('btnIkCheck').addEventListener('click', () => ikSelfCheck(true));
+
+// ============================================================
+// 8) Ollama 自然语言命令行
+// ============================================================
+const JOINT_META = [
+  { name:'Rotation',  label:'腰部旋转' },
+  { name:'Rotation1', label:'大臂俯仰' },
+  { name:'Rotation2', label:'小臂俯仰' },
+  { name:'Rotation3', label:'腕部俯仰' },
+  { name:'Rotation4', label:'腕部旋转' },
+  { name:'Rotation5', label:'夹爪开合' },
+];
+let ollamaUrl = 'http://localhost:11434';
+let ollamaModel = 'deepseek-r1:8b';
+let busy = false;
+
+function buildSysPrompt() {
+  return `你是一个 6 自由度桌面机械臂的运动规划助手。输出严格 JSON，不要任何其他文字。
+格式：{"reason":"一句话","joints":{"Rotation":0,"Rotation1":0,"Rotation2":0,"Rotation3":0,"Rotation4":0,"Rotation5":0}}
+关节范围 [-1.57, 1.57]，夹爪 Rotation5 范围 [0,1.57]（0=张开，1.3=夹紧）。
+左转 Rotation 取正，右转取负；抬起 Rotation1/Rotation2 取正；夹紧 Rotation5=1.3。`;
+}
+function stripThink(t) { return (t||'').replace(/<think[\s\S]*?<\/think>/gi,'').replace(/<think[\s\S]*$/i,'').trim(); }
+async function callOllama(text) {
+  const res = await fetch(`${ollamaUrl}/api/chat`, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({
+      model: ollamaModel, stream:false, format:'json',
+      messages:[{role:'system',content:buildSysPrompt()},{role:'user',content:text}],
+      options:{temperature:0.2}
+    })
+  });
+  if (!res.ok) throw new Error('Ollama HTTP ' + res.status);
+  const d = await res.json();
+  return d.message.content;
+}
+async function execCmd(text) {
+  if (busy || !text.trim()) return;
+  busy = true;
+  el('aiSendBtn').disabled = true; el('aiSendBtn').textContent = '执行中…';
+  addChat('user', text);
+  try {
+    el('aiStatus').textContent = '模型思考中…';
+    let raw = await callOllama(text);
+    let cleaned = stripThink(raw).replace(/^```(?:json)?/i,'').replace(/```$/,'').trim();
+    const s = cleaned.indexOf('{'), e = cleaned.lastIndexOf('}');
+    const plan = JSON.parse(cleaned.slice(s, e+1));
+    const joints = {};
+    for (const j of JOINT_META) joints[j.name] = plan.joints[j.name] || 0;
+    addChat('ai', `🤖 ${plan.reason||''}\n` + JOINT_META.map(j=>`${j.label}=${(joints[j.name]*57.3).toFixed(0)}°`).join(' '));
+    el('aiStatus').textContent = '机械臂动作中…';
+    await setRobotJoints(joints, { duration: 1600 });
+    el('aiStatus').textContent = '完成';
+  } catch (err) {
+    addChat('ai', '❌ ' + err.message);
+    el('aiStatus').textContent = '出错：' + err.message;
+  } finally {
+    busy = false;
+    el('aiSendBtn').disabled = false; el('aiSendBtn').textContent = '发送';
+  }
+}
+el('aiSendBtn').addEventListener('click', () => { const v = el('aiInput').value; el('aiInput').value=''; execCmd(v); });
+el('aiInput').addEventListener('keydown', e => { if (e.key==='Enter'){ e.preventDefault(); const v=el('aiInput').value; el('aiInput').value=''; execCmd(v);} });
+el('aiTestBtn').addEventListener('click', async () => {
+  ollamaUrl = el('aiOllamaUrl').value.trim() || ollamaUrl;
+  ollamaModel = el('aiModelName').value.trim() || ollamaModel;
+  try {
+    const r = await fetch(`${ollamaUrl}/api/tags`);
+    const d = await r.json();
+    const names = (d.models||[]).map(m=>m.name);
+    el('aiStatus').textContent = '已连接：' + (names.join(', ')||'无模型');
+  } catch(e) { el('aiStatus').textContent = '连接失败：' + e.message + '（需 OLLAMA_ORIGINS=*）'; }
+});
+document.querySelectorAll('.ai-preset-btn').forEach(btn => {
+  btn.addEventListener('click', async () => {
+    if (busy) return;
+    const pose = PRESET_POSES[btn.dataset.preset];
+    if (!pose) return;
+    busy = true;
+    addChat('user', `[预置] ${btn.dataset.preset}`);
+    await setRobotJoints(pose, { duration: 1200 });
+    addChat('ai', `✅ 已到位：${btn.dataset.preset}`);
+    busy = false;
+  });
+});
+
+// ============================================================
+// 9) 与 FastAPI 总线通信（Streamlit / Agent ←→ 浏览器机械臂）
+// ============================================================
+const vcam = new THREE.PerspectiveCamera(50, 640/480, 0.001, 10);
+vcam.position.set(0, 0.5, 0.001);
+vcam.lookAt(0, 0, 0);
+
+async function captureAndUpload() {
+  // 虚拟相机固定 640x480，先切尺寸渲染再切回来
+  const w = innerWidth - 360, h = innerHeight;
+  renderer.setSize(640, 480, false);
+  vcam.aspect = 640 / 480;
+  vcam.updateProjectionMatrix();
+  renderer.render(scene, vcam);
+  const dataUrl = renderer.domElement.toDataURL('image/jpeg', 0.85);
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  renderer.render(scene, camera);
+
+  const blob = await (await fetch(dataUrl)).blob();
+  const fd = new FormData();
+  fd.append('file', blob, 'camera.jpg');
+  await fetch('/api/upload_frame', { method: 'POST', body: fd });
+  await fetch('/api/ack_capture', { method: 'POST' });
+}
+
+let busBusy = false;           // 正在执行总线下发的动作
+let lastPickTs = 0;            // 已处理过的分拣任务时间戳（幂等，避免重复执行）
+
+/** 显示 Streamlit / Agent 同步过来的决策信息 */
+function showDecision(decision, detect, source) {
+  if (!decision) return;
+  const label = decision.dest_label || '';
+  const txt = `[${source || 'agent'}] ${decision.action || ''}`
+    + (label ? ` → ${label}` : '')
+    + (decision.reason ? `：${decision.reason}` : '');
+  el('log').textContent = txt;
+  const last = el('decisionPanel');
+  if (last) {
+    last.innerHTML = `<b>决策来源</b>：${source || '-'}<br/>`
+      + `<b>结论</b>：${decision.action || '-'} ${label ? '→ ' + label : ''}<br/>`
+      + `<b>置信度</b>：${detect && detect.conf != null ? (detect.conf * 100).toFixed(1) + '%' : '-'}`
+      + `　<b>类别</b>：${(detect && detect.defect_cls) || '-'}<br/>`
+      + `<b>理由</b>：${decision.reason || '-'}`;
+  }
+}
+
+/** 消费一次总线上的分拣任务 */
+async function runBusPick(task) {
+  busBusy = true;
+  const destXy = (task.dest_x != null && task.dest_y != null) ? [task.dest_x, task.dest_y] : null;
+  const label = destXy ? binLabelAt(destXy[0], destXy[1]) : DEST_BINS.ng.label;
+  await pickAndPlace(task.x, task.y, destXy, label);
+  await reportArmReady();
+  busBusy = false;
+}
+
+async function tick() {
+  try {
+    const bus = await (await fetch('/api/bus')).json();
+    el('pose').textContent = bus.target_pose ? JSON.stringify(bus.target_pose) : '—';
+    if (bus.decision) showDecision(bus.decision, bus.detect, bus.decision_source);
+
+    // 1) 收到拍照请求 → 截图上传
+    if (bus.capture_request) { el('log').textContent = '收到拍照请求…'; await captureAndUpload(); }
+
+    // 2) 收到分拣任务 → 走完整 IK 抓放（页面刚打开时也会补做，保证 Streamlit 跳转不丢指令）
+    const task = bus.pick_task;
+    if (task && task.ts > lastPickTs && !busy && !busBusy) {
+      lastPickTs = task.ts;
+      await runBusPick(task);
+    }
+    // 3) 只有目标点没有抓取任务 → 单纯移动过去悬停
+    else if (bus.target_pose && !task && !busy && !busBusy) {
+      const [x, z] = bus.target_pose;
+      await setRobotJoints(poseToReach(x, HOVER_Y, z, 0), { duration: 900 });
+      await reportArmReady();
+    }
+  } catch (e) { /* 静默 */ }
+  setTimeout(tick, 400);
+}
+
+// ============================================================
+// 10) 渲染循环 + 尺寸 + 页面参数（?embed=1&auto=1）
+// ============================================================
+const params = new URLSearchParams(location.search);
+const EMBED = params.get('embed') === '1';       // 被 Streamlit 以 iframe 内嵌时隐藏标题栏
+const AUTO = params.get('auto') === '1';         // 打开页面后自动执行总线里待办的分拣任务
+if (EMBED) {
+  document.body.style.setProperty('--embed', '1');
+  const h2 = document.querySelector('#sidebar h2');
+  if (h2) h2.textContent = '🤖 机械臂（来自 Streamlit）';
+}
+
+function resize() {
+  const w = innerWidth - 360, h = innerHeight;
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  renderer.setSize(w, h);
+}
+addEventListener('resize', resize);
+resize();
+
+setStatus(AUTO ? '已连接 Streamlit，等待任务…' : '就绪');
+if (AUTO) {
+  addChat('ai', '已从 Streamlit 检测界面跳转过来，正在检查待执行的分拣任务…');
+  // 真实运行环境下跑一遍 IK 自检，确认"坐标 → 关节角"链路正常
+  setTimeout(() => ikSelfCheck(true), 400);
+}
+tick();
+(function animate() {
+  requestAnimationFrame(animate);
+  renderer.render(scene, camera);
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# IDE
+.idea/
+.vscode/
+
+# 模型权重（不入库，文件太大；真实部署时用 release 附件）
+*.pt
+*.pth
+*.onnx
+
+# 运行时产物
+dataset_temp/*
+!dataset_temp/.gitkeep
+db/*.db
+db/*.sqlite
+
+# 模型评估产物 & 训练输出
+evaluation/
+runs/
+
+*.log
+
+# OS
+.DS_Store

@@ -1,0 +1,26 @@
+# ===== AI Agent 核心（决策层）=====
+langgraph>=1.0
+langchain-core
+mcp>=1.0
+
+# ===== 本地大模型（通过 HTTP 调 Ollama，无需 langchain-ollama）=====
+requests
+
+# ===== YOLO 视觉（感知层）=====
+ultralytics>=8.3
+opencv-python
+pillow
+numpy
+
+# ===== 中间通信 / 执行层（FastAPI 指令总线）=====
+fastapi
+uvicorn[standard]
+python-multipart   # FastAPI 接收图片上传必需
+
+# ===== 交互层 =====
+streamlit
+
+# ===== 浏览器机械臂页面（sim_web_static/index.html）=====
+# Three.js 用 CDN importmap 加载，不需要 npm 安装。
+# 现场无外网时：把 three.module.js 下载到 sim_web_static/ 并改 importmap 路径即可。
+# IK 自检脚本用 Node 运行（零依赖）：node tools/ik_selftest.mjs
