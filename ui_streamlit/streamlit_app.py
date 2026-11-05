@@ -291,7 +291,7 @@ with tab_detect:
                 )
                 st.caption("若浏览器拦截了自动跳转，请点击上面的按钮；页面里的动作也会在下方同屏显示。")
 
-                show_embed = st.toggle("📺 在页面内同屏显示机械臂（便于演示/答辩）", value=False,
+                show_embed = st.toggle("📺 在页面内同屏显示机械臂（便于演示）", value=False,
                                        key="embed_sim")
                 if show_embed:
                     st.components.v1.iframe(sim_url, height=620, scrolling=False)

@@ -124,7 +124,7 @@ async def set_running(running: bool) -> dict:
 
 @mcp.tool()
 async def publish_decision(action: str, reason: str, dest_label: str = "") -> dict:
-    """把 Agent 的决策结论广播到总线，浏览器页面 HUD 会同步显示（可留痕、便于答辩演示）。"""
+    """把 Agent 的决策结论广播到总线，浏览器页面 HUD 会同步显示（可留痕、便于演示复盘）。"""
     r = await _to_thread(arm.sync_decision,
                          {"action": action, "reason": reason, "dest_label": dest_label},
                          {}, "agent")

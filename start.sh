@@ -8,7 +8,7 @@
 #      ./start.sh --stop       # 停止本项目启动的服务
 #      ./start.sh --status     # 只看当前运行状态
 #
-#  也可以直接在 PyCharm 里右键 Run（.idea/runConfigurations 里已配好 3 个入口）。
+#  也可以直接在 PyCharm 里右键 Run（解释器选 conda 环境 langgraph）。
 # ============================================================================
 set -u
 

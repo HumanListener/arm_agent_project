@@ -1,21 +1,21 @@
 """
 模型评估脚本 —— 补上项目缺失的"评估闭环"。
 
-为什么需要它（面试视角）：
-    原来项目里只有推理，没有评估。面试官问"mAP 怎么算的""哪两类最容易混"
-    "阈值 0.25 是怎么定的"，没有数据支撑就只能说"经验值"，会被判定为"只会调包"。
+为什么需要它：
+    原来项目里只有推理，没有量化评估。评审时常被问到"mAP 怎么算的""哪两类最容易混"
+    "阈值 0.25 是怎么定的"，没有数据支撑就只能答"经验值"。
     这个脚本把这三件事全部变成可复现、可展示的图和数据。
 
 产出（默认写到 evaluation/ 目录）：
     01_overall_metrics.txt   —— 总体 Precision/Recall/mAP@50/mAP@50-95
     02_per_class_metrics.csv —— 每个缺陷类别的 P/R/mAP，找出最差类别
     03_confusion_matrix.png  —— 混淆矩阵热力图（含"背景"行/列 = 漏检/误检）
-    04_confusion_pairs.txt   —— 最容易混的类别组合 TOP N（面试直接引用）
+    04_confusion_pairs.txt   —— 最容易混的类别组合 TOP N（可直接引用）
     05_threshold_sweep.csv   —— 置信度阈值扫描：P/R/F1/漏检率/误检率
     06_threshold_curve.png   —— 阈值-P/R 曲线（阈值标定的依据）
     07_gt_analysis.txt       —— 数据集类别分布与不平衡分析
-    08_report.md             —— 汇总报告（可直接放 GitHub / 面试时讲）
-    09_badcases/             —— 漏检 / 误检 的典型图片（面试讲 badcase 用）
+    08_report.md             —— 汇总报告（可直接放进技术文档）
+    09_badcases/             —— 漏检 / 误检 的典型图片（复盘 badcase 用）
 
 用法：
     # 基础用法（用训练时的数据集配置）
@@ -359,7 +359,7 @@ def plot_confusion_matrix(cm: np.ndarray, labels: list[str], out_png: Path, titl
 
 
 # ============================================================
-# 4) 阈值扫描（面试里"阈值 0.25 怎么定的"的依据）
+# 4) 阈值扫描（"阈值 0.25 怎么定的"的依据）
 # ============================================================
 def sweep_thresholds(records, names: dict, thresholds: list[float],
                      iou_thres: float = 0.45) -> list[dict]:
@@ -443,7 +443,7 @@ def plot_threshold_curves(rows: list[dict], out_png: Path, current_thres: float 
 
 
 # ============================================================
-# 5) badcase 可视化（面试讲 badcase 必备）
+# 5) badcase 可视化（复盘 badcase 必备）
 # ============================================================
 def export_badcases(records, names: dict, out_dir: Path, conf_thres: float,
                     iou_thres: float = 0.45, max_per_type: int = 8):
@@ -692,7 +692,7 @@ def main():
     print("=" * 66)
     print(f" ✅ 评估完成，产物在: {out_dir}")
     print("=" * 66)
-    print(" 面试时要能讲的三句话（按这个顺序说）：")
+    print(" 汇报时要讲清的三句话（按这个顺序说）：")
     if per_class:
         w = per_class[0]
         print(f"   1) 最差类别：{w['class']} AP50={w['AP50']}，"
@@ -904,7 +904,7 @@ def write_report(out_dir, weights, data_yaml, args, names, overall, per_class,
             L.append(f"- **在误报率≤50% 的约束下漏检最低**：阈值 {low_miss['conf_thres']}"
                      f"（漏检率={low_miss['miss_rate']}）")
         L.append("")
-        L.append("> **结论模板（面试可直接用）**：")
+        L.append("> **结论模板（可直接引用）**：")
         L.append(f"> 「我没有拍脑袋定 0.25，而是做了阈值扫描："
                  f"F1 最优在 {best_f1['conf_thres'] if best_f1 else '-'}，"
                  f"但质检场景**漏检代价高于误检**，所以我选择比 F1 最优点更低的阈值，"
@@ -917,7 +917,7 @@ def write_report(out_dir, weights, data_yaml, args, names, overall, per_class,
     L.append(f"`09_badcases/` 下有 {badcase_counts[0]} 张漏检、{badcase_counts[1]} 张误报、"
              f"{badcase_counts[2]} 张判错类别。绿框=GT，红框=预测。")
     L.append("")
-    L.append("**人工看图的结论（建议你也亲眼确认一遍再写进简历/面试）**：")
+    L.append("**人工看图的结论（建议对照原图再确认一遍）**：")
     L.append("")
     L.append(f"- 典型的「漏检」图里，模型其实**报出了框**（置信度 0.38~0.41，高于阈值 0.25），"
              f"但**框的位置和 GT 重叠不够（IoU < {args.iou}）**，所以同时被算成一次漏检 + 一次误检。")
@@ -925,7 +925,7 @@ def write_report(out_dir, weights, data_yaml, args, names, overall, per_class,
     L.append("- 这也直接解释了为什么 **mAP@50 与 mAP@50-95 差距那么大**"
              "（0.7443 vs 0.3981）：分类基本对，但框贴合度不够。")
     L.append("")
-    L.append("面试时可以这样讲 badcase：")
+    L.append("badcase 可以这样讲：")
     L.append("")
     L.append(f"> 「我看了 badcase，发现 crazing 这类不是模型没检出来，"
              f"而是**框的位置和标注重叠不到 IoU {args.iou}**——"

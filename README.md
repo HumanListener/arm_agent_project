@@ -37,7 +37,7 @@
 **方式 A：一条命令（最省事，推荐）**
 
 ```bash
-cd /Users/sq/PycharmProjects/arm_agent_project
+cd arm_agent_project       # 换成你本地 clone 下来的目录
 ./start.sh                 # 自动找环境 → 起 FastAPI + Streamlit → 自动打开两个浏览器页面
 ```
 
@@ -52,22 +52,19 @@ cd /Users/sq/PycharmProjects/arm_agent_project
 已经起来的服务不会重复启动，**重复执行是安全的**。日志写在 `dataset_temp/api_server.log`
 和 `dataset_temp/streamlit.log`。
 
-**方式 B：PyCharm 里点运行按钮**
+**方式 B：PyCharm 里跑**
 
-`.idea/runConfigurations/` 里已配好 4 个运行配置，打开 PyCharm 右上角下拉框即可选：
+仓库不包含 `.idea/`（已加入 `.gitignore`），在本地自建运行配置即可，解释器统一选 conda 环境 `langgraph`：
 
-| 配置名 | 作用 |
+| 运行配置 | 运行方式 |
 |---|---|
-| `1. 一键启动全部服务` | 等同于 `./start.sh`（推荐） |
-| `2. Streamlit 检测主界面` | 只起 Streamlit 界面 |
-| `3. FastAPI 总线 + 机械臂页面` | 只起 FastAPI（带 `--reload`，改后端代码自动重载） |
-| `4. 全链路自检` | 跑 `tools/verify_all.py`，13 项检查 |
+| Streamlit 检测主界面 | 模块 `streamlit`，参数 `run ui_streamlit/streamlit_app.py` |
+| FastAPI 总线 + 机械臂页面 | 模块 `uvicorn`，参数 `api_server.arm_fastapi_server:app --port 8000 --reload` |
+| 全链路自检 | 脚本 `tools/verify_all.py`，13 项检查 |
 
-> ⚠️ **重要**：本项目用的是 conda 环境 `langgraph`，而 PyCharm 工程默认解释器是 `/opt/anaconda3`（base，**没装** fastapi/opencv/langgraph）。
-> 所以：
-> - 用上面 4 个运行配置 → 已在配置里写死用 `langgraph`，直接点就行；
-> - 如果你想在编辑器里直接右键运行 `ui_streamlit/streamlit_app.py` 之类的文件 → 先改解释器：
->   `PyCharm → Settings → Project: arm_agent_project → Python Interpreter → Add Interpreter → Conda → 选 langgraph`。
+> ⚠️ **重要**：本项目用的是 conda 环境 `langgraph`，PyCharm 工程默认解释器通常是 base（**没装** fastapi/opencv/langgraph）。
+> 在 `PyCharm → Settings → Project: arm_agent_project → Python Interpreter` 里指到 `langgraph` 之后，
+> 在编辑器里右键运行 `ui_streamlit/streamlit_app.py` 之类的文件也能正常跑。
 
 **方式 C：手动开两个终端**
 
@@ -101,6 +98,9 @@ conda activate langgraph          # 依赖已装：langgraph / ultralytics / str
 # 若换新环境：
 pip install -r requirements.txt
 ```
+
+> **YOLO 权重不入库**（`*.pt` 已在 `.gitignore`）：把训练好的 `best.pt` 放到 `yolo_module/weights/`，
+> 或改 `config/settings.py` 里的 `YOLO_BEST_PT` 指到你本地的权重路径。没有权重时感知层会直接报错。
 
 ### 1.2 前置：本地大模型
 
@@ -210,7 +210,7 @@ arm_agent_project/
 │
 ├── yolo_module/
 │   ├── yolo_defect_infer.py         # 感知层：YOLOv8 推理 + OpenCV 预处理 + 像素→世界坐标
-│   └── weights/best.pt              # NEU-DET 六类缺陷权重（crazing/inclusion/patches/pitted/scale/scratches）
+│   └── weights/                     # NEU-DET 六类缺陷权重放这里（best.pt 不入库，见 1.1）
 │
 ├── agent/
 │   ├── decision.py                  # 决策层：规则知识库 + Ollama 决策 + 中文报告模板 + 自动降级
@@ -238,14 +238,13 @@ arm_agent_project/
 │   ├── ik_selftest.mjs              # 从 index.html 抽取真实 IK 代码做自检（Node，零依赖）
 │   ├── ik_workspace.mjs             # 机械臂可达工作空间地图（改分拣区坐标前先跑它）
 │   └── make_samples.py              # 生成演示样例图并实测检测结果
-├── .idea/runConfigurations/         # PyCharm 一键运行配置（4 个入口）
-├── db/inspection.db                 # SQLite 巡检日志
-└── dataset_temp/                    # 运行产物：上传帧、可视化图、FastAPI 日志
+├── db/inspection.db                 # SQLite 巡检日志（首次运行自动创建，不入库）
+└── dataset_temp/                    # 运行产物：上传帧、可视化图、FastAPI 日志（不入库）
 ```
 
 ---
 
-## 5. 关键技术点（答辩/写报告可直接引用）
+## 5. 关键技术点（同类产线项目可直接复用）
 
 | 模块 | 做了什么 | 代码位置 |
 |---|---|---|
