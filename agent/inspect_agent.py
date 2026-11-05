@@ -1,5 +1,5 @@
 """
-单张图片的具身 Agent 闭环（LangGraph）—— Streamlit「上传图片 / 摄像头拍照」检测走的就是这条链。
+单张图片的 Agent 闭环（LangGraph）—— Streamlit「上传图片 / 摄像头拍照」检测走的就是这条链。
 
     perceive(YOLO)  →  decide(规则 + 本地 Ollama)  →  act(通过 MCP 调用机械臂工具)
 
